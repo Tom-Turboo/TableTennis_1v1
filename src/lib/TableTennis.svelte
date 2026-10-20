@@ -70,6 +70,70 @@
   let winner = $state(-1)
   let leftMouseMode = $state(false)
   let rightMouseMode = $state(false)
+  let savedProgress = $state<SavedState | null>(null)
+
+  // ── Local storage persistence ──────────────────────
+  const STORAGE_KEY = 'table-tennis-1v1'
+
+  interface SavedState {
+    gameState: 'menu' | 'playing' | 'gameover'
+    scores: [number, number]
+    rallyCount: number
+    winner: number
+    leftMouseMode: boolean
+    rightMouseMode: boolean
+    servingDirection: number
+  }
+
+  function saveState() {
+    const data: SavedState = {
+      gameState,
+      scores: [...scores] as [number, number],
+      rallyCount,
+      winner,
+      leftMouseMode,
+      rightMouseMode,
+      servingDirection,
+    }
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+    } catch {
+      // localStorage may be unavailable (private mode, quota)
+    }
+  }
+
+  function loadState(): SavedState | null {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (!raw) return null
+      const data = JSON.parse(raw) as SavedState
+      if (!data || !Array.isArray(data.scores) || data.scores.length !== 2) return null
+      return data
+    } catch {
+      return null
+    }
+  }
+
+  function clearSavedState() {
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+    } catch {
+      // ignore
+    }
+  }
+
+  // Auto-save whenever reactive state changes (after initial settings restore)
+  let initialized = false
+  $effect(() => {
+    gameState
+    scores
+    rallyCount
+    winner
+    leftMouseMode
+    rightMouseMode
+    servingDirection
+    if (initialized) saveState()
+  })
 
   // ── Non-reactive game objects ──────────────────────
   let canvas: HTMLCanvasElement
@@ -525,7 +589,33 @@
     particles = []
     servingDirection = Math.random() < 0.5 ? -1 : 1
     serveDelay = SERVE_DELAY_FRAMES
+    savedProgress = null
     gameState = 'playing'
+  }
+
+  function resumeSaved() {
+    if (!savedProgress) return
+    initAudio()
+    const saved = savedProgress
+    scores = [saved.scores[0], saved.scores[1]]
+    rallyCount = saved.rallyCount
+    winner = saved.winner
+    servingDirection = saved.servingDirection
+    paddles = createPaddles()
+    ball = createBall()
+    particles = []
+    serveDelay = SERVE_DELAY_FRAMES
+    savedProgress = null
+    gameState = 'playing'
+  }
+
+  function clearProgress() {
+    clearSavedState()
+    savedProgress = null
+    scores = [0, 0]
+    rallyCount = 0
+    winner = -1
+    gameState = 'menu'
   }
 
   onMount(() => {
@@ -533,8 +623,26 @@
     paddles = createPaddles()
     ball = createBall()
 
+    // Restore saved state: always load settings, offer resume for in-progress games
+    const saved = loadState()
+    if (saved) {
+      leftMouseMode = saved.leftMouseMode
+      rightMouseMode = saved.rightMouseMode
+      if (saved.gameState === 'playing' && (saved.scores[0] > 0 || saved.scores[1] > 0)) {
+        savedProgress = saved
+      } else if (saved.gameState === 'gameover') {
+        scores = [saved.scores[0], saved.scores[1]]
+        rallyCount = saved.rallyCount
+        winner = saved.winner
+        servingDirection = saved.servingDirection
+        gameState = 'gameover'
+      }
+    }
+    initialized = true
+
     window.addEventListener('keydown', handleKeyDown)
     window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('beforeunload', saveState)
     canvas.addEventListener('mousemove', handleMouseMove)
     canvas.addEventListener('mouseleave', handleMouseLeave)
     gameLoop()
@@ -543,6 +651,7 @@
       cancelAnimationFrame(animationId)
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('beforeunload', saveState)
       canvas.removeEventListener('mousemove', handleMouseMove)
       canvas.removeEventListener('mouseleave', handleMouseLeave)
     }
@@ -622,6 +731,9 @@
           </div>
 
           <button class="start-btn" onclick={startGame}>Start Match</button>
+          {#if savedProgress}
+            <button class="resume-btn" onclick={resumeSaved}>Resume Saved Match ({savedProgress.scores[0]}–{savedProgress.scores[1]})</button>
+          {/if}
         </div>
       </div>
     {/if}
@@ -634,6 +746,7 @@
           </h2>
           <p class="final-score">{scores[0]} &ndash; {scores[1]}</p>
           <button class="start-btn" onclick={startGame}>Play Again</button>
+          <button class="resume-btn" onclick={clearProgress}>Clear Saved Progress</button>
         </div>
       </div>
     {/if}
@@ -905,6 +1018,25 @@
   }
 
   .start-btn:active { transform: translateY(0); }
+
+  .resume-btn {
+    display: block;
+    margin: 14px auto 0;
+    padding: 10px 28px;
+    font-size: 15px;
+    font-weight: 500;
+    color: #9ca3af;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+  }
+
+  .resume-btn:hover {
+    border-color: rgba(59, 180, 247, 0.4);
+    color: #d1d5db;
+  }
 
   .legend {
     display: flex;
