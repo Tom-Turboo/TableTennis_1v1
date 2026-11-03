@@ -562,10 +562,11 @@
       const useMouse = (idx === 0 && leftMouseMode) || (idx === 1 && rightMouseMode)
 
       if (gameMode === 'bot' && idx === 1) {
-        const botSpeed = botDifficulty === 'easy' ? 4.5 : botDifficulty === 'medium' ? 6.5 : 8.5
-        const botError = botDifficulty === 'easy' ? 70 : botDifficulty === 'medium' ? 35 : 12
+        const botSpeed = botDifficulty === 'easy' ? 3.0 : botDifficulty === 'medium' ? 4.5 : 6.5
+        const botError = botDifficulty === 'easy' ? 120 : botDifficulty === 'medium' ? 75 : 30
+        const reactX = botDifficulty === 'easy' ? CANVAS_W * 0.65 : botDifficulty === 'medium' ? CANVAS_W * 0.55 : CANVAS_W * 0.5
 
-        if (ball.vx > 0 && ball.x > NET_X - 60) {
+        if (ball.vx > 0 && ball.x > reactX) {
           const timeToReach = Math.max(0, (p.x - ball.x) / ball.vx)
           let predictedY = ball.y + ball.vy * timeToReach
           const tableTop = TY + ball.radius
@@ -578,12 +579,12 @@
           predictedY += (Math.random() - 0.5) * botError
           const targetY = predictedY - p.h / 2
           const diff = targetY - p.y
-          p.vy = Math.max(-botSpeed, Math.min(botSpeed, diff * 0.2))
+          p.vy = Math.max(-botSpeed, Math.min(botSpeed, diff * 0.15))
           p.vx *= friction
         } else {
           const centerY = TY + TH / 2 - p.h / 2
           const diff = centerY - p.y
-          p.vy = Math.max(-botSpeed * 0.4, Math.min(botSpeed * 0.4, diff * 0.04))
+          p.vy = Math.max(-botSpeed * 0.3, Math.min(botSpeed * 0.3, diff * 0.03))
           p.vx *= friction
         }
       } else if (useMouse && mouseInside) {
