@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { supabase, type MatchResult } from './supabase'
 
   // ── Constants ──────────────────────────────────────
   const CANVAS_W = 900
@@ -64,13 +65,20 @@
   }
 
   // ── Reactive state (template-facing) ───────────────
-  let gameState = $state<'menu' | 'playing' | 'gameover'>('menu')
+  let gameState = $state<'menu' | 'playing' | 'gameover' | 'leaderboard'>('menu')
   let scores = $state<[number, number]>([0, 0])
   let rallyCount = $state(0)
+  let maxRally = $state(0)
   let winner = $state(-1)
   let leftMouseMode = $state(false)
   let rightMouseMode = $state(false)
   let savedProgress = $state<SavedState | null>(null)
+  let playerName = $state('')
+  let matchSaved = $state(false)
+  let savingMatch = $state(false)
+  let saveError = $state('')
+  let leaderboard = $state<MatchResult[]>([])
+  let loadingLeaderboard = $state(false)
 
   // ── Local storage persistence ──────────────────────
   const STORAGE_KEY = 'table-tennis-1v1'
@@ -83,6 +91,7 @@
     leftMouseMode: boolean
     rightMouseMode: boolean
     servingDirection: number
+    maxRally: number
   }
 
   function saveState() {
@@ -94,6 +103,7 @@
       leftMouseMode,
       rightMouseMode,
       servingDirection,
+      maxRally,
     }
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
@@ -273,6 +283,7 @@
         p.squash = 0.6
 
         rallyCount++
+        if (rallyCount > maxRally) maxRally = rallyCount
         spawnHitParticles(ball.x, ball.y, p.team === 0 ? LEFT_COLOR : RIGHT_COLOR)
         shakeIntensity = Math.min(6, rallyCount * 0.15)
         playSound(360 + rallyCount * 10, 0.07, 'square', 0.09)
@@ -583,7 +594,10 @@
     initAudio()
     scores = [0, 0]
     rallyCount = 0
+    maxRally = 0
     winner = -1
+    matchSaved = false
+    saveError = ''
     paddles = createPaddles()
     ball = createBall()
     particles = []
@@ -633,6 +647,7 @@
       } else if (saved.gameState === 'gameover') {
         scores = [saved.scores[0], saved.scores[1]]
         rallyCount = saved.rallyCount
+        maxRally = saved.maxRally ?? 0
         winner = saved.winner
         servingDirection = saved.servingDirection
         gameState = 'gameover'
@@ -734,6 +749,7 @@
           {#if savedProgress}
             <button class="resume-btn" onclick={resumeSaved}>Resume Saved Match ({savedProgress.scores[0]}–{savedProgress.scores[1]})</button>
           {/if}
+          <button class="resume-btn" onclick={async () => { await loadLeaderboard(); gameState = 'leaderboard' }}>View Leaderboard</button>
         </div>
       </div>
     {/if}
@@ -745,8 +761,65 @@
             {winner === 0 ? 'Blue' : 'Orange'} Wins!
           </h2>
           <p class="final-score">{scores[0]} &ndash; {scores[1]}</p>
+          <p class="match-detail">Longest rally: {maxRally}</p>
+
+          {#if !matchSaved}
+            <div class="save-section">
+              <input
+                class="name-input"
+                type="text"
+                maxlength="24"
+                placeholder="Enter your name"
+                bind:value={playerName}
+                onkeydown={(e) => { if (e.key === 'Enter') saveMatchResult() }}
+              />
+              <button class="start-btn" onclick={saveMatchResult} disabled={savingMatch}>
+                {savingMatch ? 'Saving...' : 'Save Score'}
+              </button>
+              {#if saveError}<p class="save-error">{saveError}</p>{/if}
+            </div>
+          {:else}
+            <p class="saved-confirm">Score saved to leaderboard!</p>
+          {/if}
+
           <button class="start-btn" onclick={startGame}>Play Again</button>
+          <button class="resume-btn" onclick={async () => { await loadLeaderboard(); gameState = 'leaderboard' }}>View Leaderboard</button>
           <button class="resume-btn" onclick={clearProgress}>Clear Saved Progress</button>
+        </div>
+      </div>
+    {/if}
+
+    {#if gameState === 'leaderboard'}
+      <div class="overlay">
+        <div class="overlay-card leaderboard-card">
+          <h2>Leaderboard</h2>
+          <p class="subtitle">Most recent matches</p>
+
+          {#if loadingLeaderboard}
+            <p class="empty-state">Loading...</p>
+          {:else if leaderboard.length === 0}
+            <p class="empty-state">No matches recorded yet. Be the first!</p>
+          {:else}
+            <div class="leaderboard-list">
+              {#each leaderboard as entry, i}
+                <div class="leaderboard-row">
+                  <span class="lb-rank">{i + 1}</span>
+                  <span class="lb-name">{entry.player_name}</span>
+                  <span class="lb-score">
+                    <span style="color: {LEFT_COLOR}">{entry.left_score}</span>
+                    &ndash;
+                    <span style="color: {RIGHT_COLOR}">{entry.right_score}</span>
+                  </span>
+                  <span class="lb-winner" style="color: {entry.winner === 0 ? LEFT_COLOR : RIGHT_COLOR}">
+                    {entry.winner === 0 ? 'Blue' : 'Orange'}
+                  </span>
+                  <span class="lb-rally">Rally {entry.longest_rally}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <button class="start-btn" onclick={() => gameState = 'menu'}>Back to Menu</button>
         </div>
       </div>
     {/if}
@@ -1066,5 +1139,125 @@
     font-size: 13px;
     color: #9ca3af;
     font-family: ui-monospace, monospace;
+  }
+
+  .match-detail {
+    font-size: 15px;
+    color: #9ca3af;
+    margin: 0 0 20px;
+  }
+
+  .save-section {
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .name-input {
+    width: 100%;
+    max-width: 280px;
+    padding: 12px 16px;
+    font-size: 16px;
+    color: #e8eaf0;
+    background: rgba(255, 255, 255, 0.06);
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    outline: none;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+  }
+
+  .name-input:focus {
+    border-color: rgba(59, 180, 247, 0.5);
+  }
+
+  .name-input::placeholder {
+    color: #6b7280;
+  }
+
+  .save-error {
+    color: #ef4444;
+    font-size: 14px;
+    margin: 4px 0 0;
+  }
+
+  .saved-confirm {
+    color: #22c55e;
+    font-size: 15px;
+    font-weight: 500;
+    margin: 0 0 20px;
+  }
+
+  .leaderboard-card {
+    max-width: 580px;
+  }
+
+  .leaderboard-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 24px;
+    max-height: 360px;
+    overflow-y: auto;
+  }
+
+  .leaderboard-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.04);
+    font-size: 14px;
+  }
+
+  .lb-rank {
+    width: 24px;
+    text-align: center;
+    font-weight: 700;
+    color: #6b7280;
+    flex-shrink: 0;
+  }
+
+  .lb-name {
+    flex: 1;
+    text-align: left;
+    color: #d1d5db;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .lb-score {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+
+  .lb-winner {
+    font-size: 13px;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .lb-rally {
+    font-size: 12px;
+    color: #6b7280;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .empty-state {
+    color: #6b7280;
+    font-size: 15px;
+    margin: 20px 0 24px;
+  }
+
+  .start-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 </style>

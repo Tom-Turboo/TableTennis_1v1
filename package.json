@@ -19,7 +19,8 @@
     "vite": "^8.3.3"
   },
   "dependencies": {
-    "@rolldown/binding-wasm32-wasi": "1.2.13"
+    "@rolldown/binding-wasm32-wasi": "1.2.13",
+    "@supabase/supabase-js": "^2.118.0"
   },
   "overrides": {
     "@napi-rs/wasm-runtime": "1.2.5"
