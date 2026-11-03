@@ -92,6 +92,8 @@
   let saveError = $state('')
   let leaderboard = $state<MatchResult[]>([])
   let loadingLeaderboard = $state(false)
+  let gameMode = $state<'2p' | 'bot'>('2p')
+  let botDifficulty = $state<'easy' | 'medium' | 'hard'>('medium')
 
   // ── Local storage persistence ──────────────────────
   const STORAGE_KEY = 'table-tennis-1v1'
@@ -105,6 +107,8 @@
     rightMouseMode: boolean
     servingDirection: number
     maxRally: number
+    gameMode: '2p' | 'bot'
+    botDifficulty: 'easy' | 'medium' | 'hard'
   }
 
   function saveState() {
@@ -117,6 +121,8 @@
       rightMouseMode,
       servingDirection,
       maxRally,
+      gameMode,
+      botDifficulty,
     }
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
@@ -155,6 +161,8 @@
     leftMouseMode
     rightMouseMode
     servingDirection
+    gameMode
+    botDifficulty
     if (initialized) saveState()
   })
 
@@ -518,7 +526,32 @@
       const idx = paddles.indexOf(p)
       const useMouse = (idx === 0 && leftMouseMode) || (idx === 1 && rightMouseMode)
 
-      if (useMouse && mouseInside) {
+      if (gameMode === 'bot' && idx === 1) {
+        const botSpeed = botDifficulty === 'easy' ? 4.5 : botDifficulty === 'medium' ? 6.5 : 8.5
+        const botError = botDifficulty === 'easy' ? 70 : botDifficulty === 'medium' ? 35 : 12
+
+        if (ball.vx > 0 && ball.x > NET_X - 60) {
+          const timeToReach = Math.max(0, (p.x - ball.x) / ball.vx)
+          let predictedY = ball.y + ball.vy * timeToReach
+          const tableTop = TY + ball.radius
+          const tableBottom = TY + TH - ball.radius
+          const range = tableBottom - tableTop
+          let py = predictedY - tableTop
+          py = ((py % (2 * range)) + 2 * range) % (2 * range)
+          if (py > range) py = 2 * range - py
+          predictedY = tableTop + py
+          predictedY += (Math.random() - 0.5) * botError
+          const targetY = predictedY - p.h / 2
+          const diff = targetY - p.y
+          p.vy = Math.max(-botSpeed, Math.min(botSpeed, diff * 0.2))
+          p.vx *= friction
+        } else {
+          const centerY = TY + TH / 2 - p.h / 2
+          const diff = centerY - p.y
+          p.vy = Math.max(-botSpeed * 0.4, Math.min(botSpeed * 0.4, diff * 0.04))
+          p.vx *= friction
+        }
+      } else if (useMouse && mouseInside) {
         // Mouse control: smooth follow
         const targetY = mouseY - p.h / 2
         const diff = targetY - p.y
@@ -840,6 +873,8 @@
     if (saved) {
       leftMouseMode = saved.leftMouseMode
       rightMouseMode = saved.rightMouseMode
+      gameMode = saved.gameMode ?? '2p'
+      botDifficulty = saved.botDifficulty ?? 'medium'
       if (saved.gameState === 'playing' && (saved.scores[0] > 0 || saved.scores[1] > 0)) {
         savedProgress = saved
       } else if (saved.gameState === 'gameover') {
@@ -885,7 +920,7 @@
       </div>
       <div class="score-pill team-right" class:active={gameState === 'playing'}>
         <span class="score-num">{scores[1]}</span>
-        <span class="team-label">Orange</span>
+        <span class="team-label">{gameMode === 'bot' ? 'Bot' : 'Orange'}</span>
       </div>
     </div>
   </header>
@@ -904,6 +939,20 @@
           <h2>One on One</h2>
           <p class="subtitle">First to {WINNING_SCORE} points wins</p>
 
+          <div class="mode-selector">
+            <button class="mode-btn" class:active={gameMode === '2p'} onclick={() => gameMode = '2p'}>2 Players</button>
+            <button class="mode-btn" class:active={gameMode === 'bot'} onclick={() => gameMode = 'bot'}>vs Bot</button>
+          </div>
+
+          {#if gameMode === 'bot'}
+            <div class="difficulty-selector">
+              <span class="diff-label">Difficulty:</span>
+              <button class="diff-btn" class:active={botDifficulty === 'easy'} onclick={() => botDifficulty = 'easy'}>Easy</button>
+              <button class="diff-btn" class:active={botDifficulty === 'medium'} onclick={() => botDifficulty = 'medium'}>Medium</button>
+              <button class="diff-btn" class:active={botDifficulty === 'hard'} onclick={() => botDifficulty = 'hard'}>Hard</button>
+            </div>
+          {/if}
+
           <div class="controls-grid">
             <div class="team-controls">
               <h3 class="team-heading left">Blue (Left)</h3>
@@ -921,22 +970,29 @@
                 <span>Mouse control</span>
               </label>
             </div>
-            <div class="team-controls">
-              <h3 class="team-heading right">Orange (Right)</h3>
-              <div class="player-row">
-                <span class="player-name">Move</span>
-                <div class="keys">
-                  <span class="key">&#8593;</span>
-                  <span class="key">&#8592;</span>
-                  <span class="key">&#8595;</span>
-                  <span class="key">&#8594;</span>
+            {#if gameMode === '2p'}
+              <div class="team-controls">
+                <h3 class="team-heading right">Orange (Right)</h3>
+                <div class="player-row">
+                  <span class="player-name">Move</span>
+                  <div class="keys">
+                    <span class="key">&#8593;</span>
+                    <span class="key">&#8592;</span>
+                    <span class="key">&#8595;</span>
+                    <span class="key">&#8594;</span>
+                  </div>
                 </div>
+                <label class="toggle-row">
+                  <input type="checkbox" bind:checked={rightMouseMode} />
+                  <span>Mouse control</span>
+                </label>
               </div>
-              <label class="toggle-row">
-                <input type="checkbox" bind:checked={rightMouseMode} />
-                <span>Mouse control</span>
-              </label>
-            </div>
+            {:else}
+              <div class="team-controls">
+                <h3 class="team-heading right">Orange (Bot)</h3>
+                <p class="bot-info">{botDifficulty === 'easy' ? 'Casual' : botDifficulty === 'medium' ? 'Skilled' : 'Ruthless'} AI opponent</p>
+              </div>
+            {/if}
           </div>
 
           <div class="rule-note">
@@ -949,7 +1005,7 @@
             <div class="gadget-item"><span class="gadget-icon" style="color:#e879f9">&#9737;</span> Curve Ball</div>
           </div>
 
-          <button class="start-btn" onclick={startGame}>Start Match</button>
+          <button class="start-btn" onclick={startGame}>{gameMode === 'bot' ? 'Start vs Bot' : 'Start Match'}</button>
           {#if savedProgress}
             <button class="resume-btn" onclick={resumeSaved}>Resume Saved Match ({savedProgress.scores[0]}–{savedProgress.scores[1]})</button>
           {/if}
@@ -962,7 +1018,7 @@
       <div class="overlay">
         <div class="overlay-card">
           <h2 class="winner-text" style="color: {winner === 0 ? LEFT_COLOR : RIGHT_COLOR}">
-            {winner === 0 ? 'Blue' : 'Orange'} Wins!
+            {winner === 0 ? 'Blue' : gameMode === 'bot' ? 'Bot' : 'Orange'} Wins!
           </h2>
           <p class="final-score">{scores[0]} &ndash; {scores[1]}</p>
           <p class="match-detail">Longest rally: {maxRally}</p>
@@ -1038,7 +1094,7 @@
     </div>
     <div class="legend-team right">
       <span class="legend-labels">
-        {rightMouseMode ? 'Mouse' : '&#8593; &#8592; &#8595; &#8594;'}
+        {gameMode === 'bot' ? 'Bot' : rightMouseMode ? 'Mouse' : '&#8593; &#8592; &#8595; &#8594;'}
       </span>
       <span class="legend-dot" style="background: {RIGHT_COLOR}"></span>
     </div>
@@ -1295,6 +1351,68 @@
   .gadget-icon {
     font-size: 18px;
     line-height: 1;
+  }
+
+  .mode-selector {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+
+  .mode-btn {
+    padding: 10px 24px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #9ca3af;
+    background: rgba(255, 255, 255, 0.04);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s, background 0.2s;
+  }
+
+  .mode-btn.active {
+    color: #e8eaf0;
+    border-color: rgba(59, 180, 247, 0.5);
+    background: rgba(59, 180, 247, 0.08);
+  }
+
+  .difficulty-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+
+  .diff-label {
+    font-size: 14px;
+    color: #9ca3af;
+    font-weight: 500;
+  }
+
+  .diff-btn {
+    padding: 6px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #9ca3af;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+  }
+
+  .diff-btn.active {
+    color: #ff7849;
+    border-color: rgba(255, 120, 73, 0.5);
+  }
+
+  .bot-info {
+    font-size: 13px;
+    color: #9ca3af;
+    margin: 0;
   }
 
   .start-btn {
