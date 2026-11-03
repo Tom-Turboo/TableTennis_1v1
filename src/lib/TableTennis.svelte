@@ -166,6 +166,41 @@
     if (initialized) saveState()
   })
 
+  // ── Supabase stats ─────────────────────────────────
+  async function saveMatchResult() {
+    if (matchSaved || savingMatch) return
+    const name = playerName.trim() || 'Anonymous'
+    savingMatch = true
+    saveError = ''
+    const { error } = await supabase.from('match_results').insert({
+      player_name: name.slice(0, 24),
+      winner,
+      left_score: scores[0],
+      right_score: scores[1],
+      longest_rally: maxRally,
+    })
+    savingMatch = false
+    if (error) {
+      saveError = 'Could not save score. Please try again.'
+    } else {
+      matchSaved = true
+      await loadLeaderboard()
+    }
+  }
+
+  async function loadLeaderboard() {
+    loadingLeaderboard = true
+    const { data, error } = await supabase
+      .from('match_results')
+      .select('player_name, winner, left_score, right_score, longest_rally, created_at')
+      .order('created_at', { ascending: false })
+      .limit(10)
+    loadingLeaderboard = false
+    if (!error && data) {
+      leaderboard = data as MatchResult[]
+    }
+  }
+
   // ── Non-reactive game objects ──────────────────────
   let canvas: HTMLCanvasElement
   let ctx: CanvasRenderingContext2D
