@@ -25,6 +25,19 @@
   const RIGHT_COLOR = '#ff7849'
 
   // ── Types ──────────────────────────────────────────
+  type GadgetType = 'speed' | 'giant' | 'curve'
+
+  interface Gadget {
+    type: GadgetType
+    x: number
+    y: number
+    radius: number
+    spawnTime: number
+    life: number
+    maxLife: number
+    bob: number
+  }
+
   interface Ball {
     x: number
     y: number
@@ -161,6 +174,16 @@
   let shakeIntensity = 0
   let mouseY = 0
   let mouseInside = false
+  let gadgets: Gadget[] = []
+  let exchangesSinceGadget = 0
+  const GADGET_INTERVAL = 3
+  const GADGET_RADIUS = 16
+  const GADGET_LIFE = 480
+  let giantPaddleTimers = [0, 0]
+  const GIANT_PADDLE_DURATION = 300
+  const GIANT_PADDLE_H = 180
+  let curveTimer = 0
+  const CURVE_DURATION = 240
 
   // ── Audio ──────────────────────────────────────────
   function initAudio() {
@@ -220,6 +243,152 @@
     ball.trail = []
   }
 
+  // ── Gadgets ───────────────────────────────────────
+  function maybeSpawnGadget() {
+    exchangesSinceGadget++
+    if (exchangesSinceGadget < GADGET_INTERVAL) return
+    if (gadgets.length >= 2) return
+    exchangesSinceGadget = 0
+
+    const types: GadgetType[] = ['speed', 'giant', 'curve']
+    const type = types[Math.floor(Math.random() * types.length)]
+    const x = TX + 120 + Math.random() * (TW - 240)
+    const y = TY + 60 + Math.random() * (TH - 120)
+    gadgets.push({
+      type, x, y, radius: GADGET_RADIUS,
+      spawnTime: Date.now(), life: GADGET_LIFE, maxLife: GADGET_LIFE, bob: 0,
+    })
+    playSound(600, 0.1, 'triangle', 0.06)
+  }
+
+  function checkGadgetCollision(gadget: Gadget): boolean {
+    const dx = ball.x - gadget.x
+    const dy = ball.y - gadget.y
+    const dist = Math.hypot(dx, dy)
+    if (dist < ball.radius + gadget.radius) {
+      applyGadget(gadget)
+      spawnGadgetPickupParticles(gadget.x, gadget.y, gadgetColor(gadget.type))
+      return true
+    }
+    gadget.bob += 0.08
+    gadget.life--
+    return gadget.life <= 0
+  }
+
+  function gadgetColor(type: GadgetType): string {
+    return type === 'speed' ? '#fbbf24' : type === 'giant' ? '#22c55e' : '#e879f9'
+  }
+
+  function applyGadget(g: Gadget) {
+    if (g.type === 'speed') {
+      const speed = Math.hypot(ball.vx, ball.vy)
+      const boost = Math.min(speed * 1.5, MAX_BALL_SPEED)
+      const angle = Math.atan2(ball.vy, ball.vx)
+      ball.vx = Math.cos(angle) * boost
+      ball.vy = Math.sin(angle) * boost
+      shakeIntensity = 10
+      playSound(800, 0.15, 'square', 0.12)
+    } else if (g.type === 'giant') {
+      const dir = ball.vx > 0 ? 0 : 1
+      giantPaddleTimers[dir] = GIANT_PADDLE_DURATION
+      const p = paddles[dir]
+      const cy = p.y + p.h / 2
+      p.h = GIANT_PADDLE_H
+      p.maxY = TY + TH - GIANT_PADDLE_H - 5
+      p.y = Math.max(p.minY, Math.min(p.maxY, cy - GIANT_PADDLE_H / 2))
+      playSound(500, 0.2, 'sine', 0.1)
+    } else {
+      curveTimer = CURVE_DURATION
+      playSound(400, 0.2, 'triangle', 0.1)
+    }
+  }
+
+  function spawnGadgetPickupParticles(x: number, y: number, color: string) {
+    for (let i = 0; i < 20; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const speed = 2 + Math.random() * 5
+      particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 40, maxLife: 40, color, size: 2 + Math.random() * 3 })
+    }
+  }
+
+  function drawGadgets() {
+    for (const g of gadgets) {
+      const yOff = Math.sin(g.bob) * 4
+      const cx = g.x
+      const cy = g.y + yOff
+      const color = gadgetColor(g.type)
+      const alpha = g.life < 60 ? g.life / 60 : 1
+
+      ctx.globalAlpha = alpha
+      ctx.shadowColor = color
+      ctx.shadowBlur = 20
+
+      if (g.type === 'speed') {
+        drawLightning(cx, cy, g.radius, color)
+      } else if (g.type === 'giant') {
+        drawStar(cx, cy, g.radius, color)
+      } else {
+        drawSpiral(cx, cy, g.radius, color)
+      }
+
+      ctx.shadowColor = 'transparent'
+      ctx.shadowBlur = 0
+      ctx.globalAlpha = 1
+    }
+  }
+
+  function drawLightning(cx: number, cy: number, r: number, color: string) {
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.moveTo(cx + r * 0.2, cy - r)
+    ctx.lineTo(cx - r * 0.5, cy + r * 0.1)
+    ctx.lineTo(cx, cy + r * 0.1)
+    ctx.lineTo(cx - r * 0.2, cy + r)
+    ctx.lineTo(cx + r * 0.5, cy - r * 0.1)
+    ctx.lineTo(cx, cy - r * 0.1)
+    ctx.closePath()
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+  }
+
+  function drawStar(cx: number, cy: number, r: number, color: string) {
+    ctx.fillStyle = color
+    ctx.beginPath()
+    const spikes = 5
+    const outer = r
+    const inner = r * 0.45
+    for (let i = 0; i < spikes * 2; i++) {
+      const angle = (i / (spikes * 2)) * Math.PI * 2 - Math.PI / 2
+      const rad = i % 2 === 0 ? outer : inner
+      const px = cx + Math.cos(angle) * rad
+      const py = cy + Math.sin(angle) * rad
+      if (i === 0) ctx.moveTo(px, py)
+      else ctx.lineTo(px, py)
+    }
+    ctx.closePath()
+    ctx.fill()
+  }
+
+  function drawSpiral(cx: number, cy: number, r: number, color: string) {
+    ctx.strokeStyle = color
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    for (let t = 0; t < Math.PI * 4; t += 0.15) {
+      const rad = (t / (Math.PI * 4)) * r
+      const px = cx + Math.cos(t) * rad
+      const py = cy + Math.sin(t) * rad
+      if (t === 0) ctx.moveTo(px, py)
+      else ctx.lineTo(px, py)
+    }
+    ctx.stroke()
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.arc(cx, cy, 3, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
   // ── Game logic ─────────────────────────────────────
   function update() {
     if (serveDelay > 0) {
@@ -231,6 +400,14 @@
     }
 
     updatePaddles()
+
+    // Curve effect
+    if (curveTimer > 0) {
+      curveTimer--
+      const perp = Math.atan2(ball.vy, ball.vx) + Math.PI / 2
+      ball.vx += Math.cos(perp) * 0.08 * Math.sin(curveTimer * 0.1)
+      ball.vy += Math.sin(perp) * 0.08 * Math.sin(curveTimer * 0.1)
+    }
 
     // Move ball
     ball.x += ball.vx
@@ -284,11 +461,15 @@
 
         rallyCount++
         if (rallyCount > maxRally) maxRally = rallyCount
+        maybeSpawnGadget()
         spawnHitParticles(ball.x, ball.y, p.team === 0 ? LEFT_COLOR : RIGHT_COLOR)
         shakeIntensity = Math.min(6, rallyCount * 0.15)
         playSound(360 + rallyCount * 10, 0.07, 'square', 0.09)
       }
     }
+
+    // Gadget collision
+    gadgets = gadgets.filter((g) => !checkGadgetCollision(g))
 
     // Scoring
     if (ball.x + ball.radius < TX) {
@@ -307,9 +488,19 @@
       if (p.life <= 0) particles.splice(i, 1)
     }
 
-    // Update squash recovery
-    for (const p of paddles) {
-      p.squash += (1 - p.squash) * 0.15
+    // Update squash recovery & giant paddle timers
+    for (let i = 0; i < paddles.length; i++) {
+      paddles[i].squash += (1 - paddles[i].squash) * 0.15
+      if (giantPaddleTimers[i] > 0) {
+        giantPaddleTimers[i]--
+        if (giantPaddleTimers[i] === 0) {
+          const targetH = PADDLE_H
+          const cy = paddles[i].y + paddles[i].h / 2
+          paddles[i].h = targetH
+          paddles[i].y = Math.max(paddles[i].minY, Math.min(paddles[i].maxY + (GIANT_PADDLE_H - PADDLE_H), cy - targetH / 2))
+          paddles[i].maxY = TY + TH - targetH - 5
+        }
+      }
     }
 
     // Screen shake decay
@@ -516,6 +707,9 @@
       }
     }
 
+    // Gadgets
+    drawGadgets()
+
     // Particles
     for (const p of particles) {
       ctx.globalAlpha = p.life / p.maxLife
@@ -601,6 +795,10 @@
     paddles = createPaddles()
     ball = createBall()
     particles = []
+    gadgets = []
+    exchangesSinceGadget = 0
+    giantPaddleTimers = [0, 0]
+    curveTimer = 0
     servingDirection = Math.random() < 0.5 ? -1 : 1
     serveDelay = SERVE_DELAY_FRAMES
     savedProgress = null
@@ -742,7 +940,13 @@
           </div>
 
           <div class="rule-note">
-            <strong>Tip:</strong> Move your paddle freely in your half. Hit the ball with the edge of your paddle to angle the shot. Your paddle's movement adds spin to the ball.
+            <strong>Tip:</strong> Move your paddle freely in your half. Hit the ball with the edge of your paddle to angle the shot. Your paddle's movement adds spin to the ball. Watch for glowing power-ups that appear on the table every few hits!
+          </div>
+
+          <div class="gadget-legend">
+            <div class="gadget-item"><span class="gadget-icon" style="color:#fbbf24">&#9889;</span> Speed Boost</div>
+            <div class="gadget-item"><span class="gadget-icon" style="color:#22c55e">&#9733;</span> Giant Paddle</div>
+            <div class="gadget-item"><span class="gadget-icon" style="color:#e879f9">&#9737;</span> Curve Ball</div>
           </div>
 
           <button class="start-btn" onclick={startGame}>Start Match</button>
@@ -1071,6 +1275,27 @@
   }
 
   .rule-note strong { color: #d1d5db; }
+
+  .gadget-legend {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+
+  .gadget-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #9ca3af;
+  }
+
+  .gadget-icon {
+    font-size: 18px;
+    line-height: 1;
+  }
 
   .start-btn {
     padding: 14px 40px;
